@@ -13,17 +13,9 @@ all_data = pd.concat([pd.read_csv(path) for path in file_paths], ignore_index=Tr
 # question_id에서 숫자만 추출
 all_data['question_num'] = all_data['question_id'].str.extract('(\d+)').astype(int)
 
-# 섹션 매핑 (4문항씩)
-section_map = {
-    1: "포토이즘 이용 경험",
-    2: "포토이즘 사용 동기",
-    3: "포토이즘 개선 사항",
-    4: "포토이즘 전반적인 인식"
-}
-
-def analyze_section(section_name, qa_pairs):
+def analyze_section(qa_pairs):
     """
-    섹션 단위로 분석 요약 (줄글)
+    섹션 단위로 분석 요약 (GPT가 섹션 주제를 스스로 도출)
     """
     formatted = "\n".join([
         f"Q: {q}\nA: {a}" for q, a in qa_pairs
@@ -31,16 +23,18 @@ def analyze_section(section_name, qa_pairs):
 
     prompt = f"""
 당신은 인터뷰 데이터를 분석하는 전문가입니다.
-다음은 '{section_name}' 섹션의 질문과 답변 모음입니다.
-응답자들의 공통적인 패턴, 주요 키워드, 긍정적/부정적 인식 등을 종합하여 
-섹션별로 하나의 보고서 단락(줄글)로 작성하세요.
+다음은 하나의 섹션에 속하는 질문과 답변 모음입니다.
+아래 데이터를 바탕으로 먼저 이 질문들이 다루는 주제를 스스로 정하고,
+그 주제를 섹션 제목으로 제시하세요.  
+그 후, 응답자들의 공통적인 패턴, 주요 키워드, 긍정적/부정적 인식 등을 종합하여 
+약 5~8문장 정도의 줄글 요약을 작성하세요.
 
 [데이터]
 {formatted}
 
-[보고서 작성 형식]
+[출력 형식]
 - 섹션 제목
-- 줄글 요약 (약 5~8문장)
+- 줄글 요약
 """
     try:
         response = client.chat.completions.create(
@@ -57,28 +51,26 @@ def analyze_section(section_name, qa_pairs):
 doc = Document()
 doc.add_heading("포토이즘 인터뷰 분석 보고서", level=0)
 
-# 섹션별 분석 추가
-for section_idx, section_name in section_map.items():
-    # 해당 섹션에 속하는 질문 필터링
-    section_rows = all_data[
-        (all_data['question_num'] > (section_idx-1)*4) &
-        (all_data['question_num'] <= section_idx*4)
-    ]
-    qa_pairs = list(zip(section_rows['question_text'], section_rows['answer']))
+# session별 그룹핑 (session 컬럼 있다고 가정)
+if "session" not in all_data.columns:
+    raise ValueError("CSV에 'session' 컬럼이 필요합니다.")
+
+for session_id, group in all_data.groupby("session"):
+    qa_pairs = list(zip(group['question_text'], group['answer']))
 
     if not qa_pairs:
         continue
 
     # GPT 분석
-    result = analyze_section(section_name, qa_pairs)
+    result = analyze_section(qa_pairs)
     if result:
-        doc.add_heading(section_name, level=1)
+        doc.add_heading(f"세션 {session_id}", level=1)
         doc.add_paragraph(result)
 
     time.sleep(2)  # 안전한 API 호출 간격
 
 # Word 파일 저장
-output_path = "interview_section_report.docx"
+output_path = "interview_session_report2.docx"
 doc.save(output_path)
 
 print(f"✅ 분석 완료! Word 보고서가 '{output_path}' 파일로 생성되었습니다.")
